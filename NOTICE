@@ -1,11 +1,22 @@
-Herdr App Groups & Spaces — repository foundation
-Copyright 2026 Project contributors
+Herdr App Groups & Spaces (Project Spaces)
+Copyright 2026 Project Spaces contributors
 
-Original repository infrastructure and documentation are licensed under
-Apache License 2.0; see LICENSE.
+This project is an independent add-on for Herdr, not an official Herdr release.
 
-This branch contains no Herdr mod implementation or adapted third-party
-mod source. Third-party notices must be added together with the code
-to which they apply.
+The Spaces toolbar and project/folder drag-and-drop are adapted and modified
+from Herdr Space Folders by Jankees van Woezik:
+https://github.com/jankeesvw/herdr-space-folders
+Upstream commit: 63a78b20d5ed30d57166a3c7165a6eb558c3ef84
 
-This is an independent project, not an official Herdr release.
+Herdr Space Folders additions are Copyright (c) 2026 Jankees van Woezik,
+licensed under MIT. Its base derives from Herdr's spaces mod, licensed
+under Apache License 2.0.
+
+Full third-party notices and license texts are distributed with the mod:
+- mods/project-spaces/THIRD-PARTY-NOTICES.md
+- mods/project-spaces/LICENSE-space-folders
+- mods/project-spaces/LICENSE-APACHE
+
+The project's original contributions are licensed under Apache License 2.0.
+Third-party components retain their copyright notices and license terms.
+Icons referenced from Herdr's workspace-chrome mod are not redistributed.
