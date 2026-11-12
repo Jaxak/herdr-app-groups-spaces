@@ -1,0 +1,45 @@
+# Local agent state and dependencies
+.pi/
+node_modules/
+
+# Herdr-generated API and editor configuration
+mods/*/jsconfig.json
+mods/*/*.d.ts
+
+# Credentials; sanitized examples may be committed
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Local app state, backups and diagnostic artifacts
+/shared.json
+/view.json
+/settings.json
+/keys.json
+/window*.json
+/backups/
+/screenshots-local/
+/herdr-shot*.png
+/project-spaces-*.png
+*.log
+npm-debug.log*
+*.bak
+*.backup
+*.orig
+*.rej
+/coverage/
+*.tgz
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

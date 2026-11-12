@@ -1,0 +1,11 @@
+Herdr App Groups & Spaces — repository foundation
+Copyright 2026 Project contributors
+
+Original repository infrastructure and documentation are licensed under
+Apache License 2.0; see LICENSE.
+
+This branch contains no Herdr mod implementation or adapted third-party
+mod source. Third-party notices must be added together with the code
+to which they apply.
+
+This is an independent project, not an official Herdr release.
