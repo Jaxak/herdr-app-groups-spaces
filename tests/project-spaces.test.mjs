@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { SourceTextModule, SyntheticModule } from "node:vm";
+import { readState } from "../mods/project-spaces/model.js";
 
 const entry = new URL("../mods/project-spaces/main.js", import.meta.url);
 
@@ -55,7 +56,8 @@ async function loadMod(props = {}, state = { spaces: [], commands: [], overlays:
           set_value: value => { text = value; },
           on: (name, handler) => { input.handlers[name] = handler; return true; },
           focus: () => { state.focuses++; },
-          set_selected_range() {},
+          release: () => { input.released = true; return true; },
+          set_selected_range: range => { input.selectedRange = range; },
         };
         state.inputs.push(input);
         return input;
@@ -66,6 +68,7 @@ async function loadMod(props = {}, state = { spaces: [], commands: [], overlays:
       panes: () => { state.paneReads++; return state.panes; },
       theme: () => state.theme ?? ({}),
       props: () => props,
+      layout: () => state.layout,
       run: (...args) => state.commands.push(args),
       openOverlay: spec => { state.events.push(["open", spec]); return state.overlays.push(spec); },
       closeOverlay: id => { state.events.push(["close", id]); state.closed.push(id); },
@@ -497,6 +500,439 @@ async function collapsibleMod() {
 function hasId(root, id) {
   return nodes(root).some(node => node.attributes.id?.[0] === id);
 }
+
+function sidebarLayout(width) {
+  return { id: "root", children: [{ id: "work" }, { id: "left", children: [
+    { id: "sidebar", size: { px: width } },
+  ] }] };
+}
+
+test("compact sidebar draws groups with only a neutral left border", async () => {
+  const { view, state } = await collapsibleMod();
+  state.theme = { border: "#333333" };
+  for (const width of [44, 76, 159]) {
+    state.layout = sidebarLayout(width);
+    const tree = view.render();
+    for (const id of ["g1", "g2"]) {
+      const group = byId(tree, `group-${id}`);
+      assert.equal(group.attributes.border_l?.[0], 1);
+      assert.equal(group.attributes.pr?.[0], 1, "Balance the left border so grouped and root icons share one center");
+      assert.equal(group.attributes.border_color?.[0], state.theme.border);
+      assert.equal(group.attributes.border_1, undefined);
+      assert.equal(group.attributes.rounded, undefined);
+      for (const action of ["add", "edit", "delete"]) assert.ok(!hasId(tree, `group-${action}-${id}`));
+    }
+    assert.ok(!hasId(tree, "folder-new"));
+    assert.ok(!hasId(tree, "project-settings"));
+    assert.ok(!texts(tree).includes("Spaces"));
+    byId(tree, "space-new");
+  }
+  assert.deepEqual(state.writes, []);
+});
+
+test("compact empty sidebar shows an accessible icon instead of squeezed text", async () => {
+  const { view, state } = await loadMod();
+  state.layout = sidebarLayout(44);
+  const tree = view.render();
+  assert.ok(!texts(tree).includes("Нет открытых проектов"));
+  assert.ok(nodes(tree).some(node => node.attributes.tooltip?.[0] === "Нет открытых проектов"));
+});
+
+test("compact exit drop zone keeps its action without a squeezed instruction", async () => {
+  const { view, state, cx } = await collapsibleMod();
+  state.layout = sidebarLayout(44);
+  view.startDrag("project", "s1", { position: { x: 10, y: 10 } }, cx);
+  view.aimDrop({ kind: "group", id: "ungrouped" }, { position: { x: 20, y: 10 } }, cx);
+  const target = byId(view.render(), "folder-out");
+  assert.deepEqual(texts(target), []);
+  assert.equal(target.attributes.w?.[0], 32);
+  assert.equal(target.attributes.tooltip?.[0], "Убрать проект из группы");
+  target.handlers["on_mouse_up:left"]({}, cx);
+  assert.equal(state.saved.assignments.s1, undefined);
+});
+
+test("wide or unknown sidebar widths keep the full presentation", async () => {
+  const { view, state } = await collapsibleMod();
+  for (const layout of [sidebarLayout(160), sidebarLayout(268), undefined,
+    { id: "root" }, { id: "sidebar", size: { weight: 1 } }]) {
+    state.layout = layout;
+    const tree = view.render();
+    assert.ok(Object.hasOwn(byId(tree, "group-g1").attributes, "border_1"));
+    assert.equal(byId(tree, "group-g1").attributes.border_l, undefined);
+    byId(tree, "collapse-project-s1");
+    byId(tree, "terminal-pane1");
+  }
+});
+
+test("compact sidebar hides terminals without changing saved project collapse", async () => {
+  const { view, state } = await collapsibleMod();
+  state.layout = sidebarLayout(268);
+  state.saved.collapsedProjects = ["s2"];
+  const saved = structuredClone(state.saved);
+  const visible = terminalIds(view.render());
+  const paneReads = state.paneReads;
+  state.layout = sidebarLayout(44);
+  const compact = view.render();
+  assert.deepEqual(terminalIds(compact), []);
+  for (const space of state.spaces) assert.ok(!hasId(compact, `collapse-project-${space.id}`));
+  assert.equal(state.paneReads, paneReads);
+  state.layout = sidebarLayout(268);
+  assert.deepEqual(terminalIds(view.render()), visible);
+  assert.deepEqual(state.saved, saved);
+  assert.deepEqual(state.writes, []);
+  assert.deepEqual(state.commands, []);
+});
+
+test("compact projects have fixed cells with an active left line instead of a fill", async () => {
+  const { view, state } = await collapsibleMod();
+  state.layout = sidebarLayout(44);
+  state.theme = { chrome: "#111111", selected: "#555555", accent: "#9999ff" };
+  for (const grouped of [true, false]) {
+    state.saved.settings.groupProjects = grouped;
+    const tree = view.render();
+    assert.equal(byId(tree, "project-list").attributes.px?.[0], 4);
+    for (const space of state.spaces) {
+      const project = byId(tree, `project-${space.id}`);
+      assert.equal(project.attributes.w?.[0], 32);
+      assert.equal(project.attributes.h?.[0], 28);
+      assert.equal(project.attributes.bg?.[0], state.theme.chrome);
+      assert.equal(project.attributes.selected?.[0], false);
+      assert.equal(project.attributes.border_l?.[0], 2);
+      assert.equal(project.attributes.rounded?.[0], 0, "The active marker is a straight vertical line");
+      assert.equal(project.attributes.border_color?.[0], space.active ? state.theme.accent : state.theme.chrome);
+      assert.equal(byId(tree, `project-${space.id}-content`).attributes.ml?.[0], 0);
+      assert.deepEqual(texts(project), [[...space.name].slice(0, 2).join("")]);
+    }
+    assert.ok(!texts(tree).includes("server"));
+  }
+});
+
+test("project and group tooltips always show their full current names", async () => {
+  const { view, state } = await collapsibleMod();
+  for (const width of [44, 268]) {
+    state.layout = sidebarLayout(width);
+    for (const suffix of ["", " — полное название проекта и группы"]) {
+      state.spaces[0].name = `Local${suffix}`;
+      state.saved.groups[0].name = `Work${suffix}`;
+      const tree = view.render();
+      assert.equal(byId(tree, "project-s1").attributes.tooltip?.[0], state.spaces[0].name);
+      assert.equal(byId(tree, "group-label-g1").attributes.tooltip?.[0], state.saved.groups[0].name);
+      assert.ok(byId(tree, "project-s1").attributes.accessibility_label?.[0].includes(state.spaces[0].name));
+    }
+  }
+});
+
+test("inline group drafts survive a compact sidebar without rendering a squeezed editor", async () => {
+  const { view, state, cx } = await collapsibleMod();
+  view.beginGroupEdit("g1", cx);
+  const input = view.input;
+  input.set_value("Несохранённое имя");
+  state.layout = sidebarLayout(44);
+  assert.ok(!hasId(view.render(), "group-editor"));
+  state.layout = sidebarLayout(268);
+  byId(view.render(), "group-editor");
+  assert.equal(view.input, input);
+  assert.equal(input.value(), "Несохранённое имя");
+  assert.deepEqual(state.writes, []);
+});
+
+test("compact names keep project selection, native menus and group collapse", async () => {
+  const { view, state, cx } = await collapsibleMod();
+  state.layout = sidebarLayout(44);
+  let tree = view.render();
+  byId(tree, "project-server/s1").handlers.on_click({}, cx);
+  assert.deepEqual(state.commands, [["space.select", { id: "server/s1" }]]);
+  byId(tree, "project-s1").handlers.on_key_down({ keystroke: "shift-f10" }, cx);
+  assert.equal(state.overlays[0].props.target.id, "s1");
+  byId(tree, "group-label-g1").handlers.on_click({}, cx);
+  tree = view.render();
+  assert.ok(!hasId(tree, "project-s1"));
+  byId(tree, "project-server/s1");
+  assert.deepEqual(state.saved.collapsedGroups, ["g1"]);
+});
+
+test("color state validates palette and HEX values while keeping legacy defaults", () => {
+  const state = readState({
+    groups: [{ id: "g1", name: "Work", color: "ansi4" }, { id: "g2", name: "Bad", color: "background" }],
+    projectColors: { s1: "ansi1", "server/s1": "ansi5", "offline/s9": "ansi6", "": "ansi2",
+      css: "red", hex: "#ffffff", number: 1, object: {}, invalid: "ansi99",
+      short: "#abc", alpha: "#123456ff", bad: "#gggggg", spaces: " #123456 " },
+  });
+  assert.equal(state.groups[0].color, "ansi4");
+  assert.equal(state.groups[1].color, undefined);
+  assert.deepEqual(state.projectColors, { s1: "ansi1", "server/s1": "ansi5", "offline/s9": "ansi6", hex: "#ffffff" });
+  assert.deepEqual(readState(undefined).projectColors, {});
+  assert.deepEqual(readState({ projectColors: ["ansi4"] }).projectColors, {});
+});
+
+test("HEX colors are rendered literally for group borders and project icons", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.groups[0].color = "#12ABef";
+  state.saved.projectColors = { s1: "#AbCdEf" };
+  for (const width of [44, 268]) {
+    state.layout = sidebarLayout(width);
+    const tree = view.render();
+    assert.equal(byId(tree, "group-g1").attributes.border_color?.[0], "#12ABef");
+    const groupIcon = nodes(byId(tree, "group-label-g1")).find(node => node.attributes.asset?.[0]?.endsWith("layers.svg"));
+    assert.equal(groupIcon.attributes.text_color?.[0], "#12ABef");
+    const project = byId(tree, "project-s1");
+    const glyph = width === 44 ? project.childNodes[0]
+      : nodes(project).find(node => node.attributes.asset?.[0]?.endsWith("folder.svg"));
+    assert.equal(glyph.attributes.text_color?.[0], "#AbCdEf");
+  }
+  assert.deepEqual(state.writes, []);
+});
+
+test("HEX fields allocate retained input only on activation", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  state.saved.groups[0].color = "#12aBcD";
+  const tree = view.render();
+  assert.deepEqual(texts(byId(tree, "color-group-g1-hex")), ["#12aBcD"]);
+  assert.deepEqual(texts(byId(tree, "color-project-s2-hex")), ["#RRGGBB"]);
+  view.render();
+  assert.equal(state.inputs.length, 0);
+  byId(tree, "color-group-g1-hex").handlers.on_click({}, cx);
+  const input = view.colorEditor.input;
+  assert.equal(state.inputs.length, 1);
+  assert.equal(state.focuses, 1);
+  assert.deepEqual(input.selectedRange, { start: 0, end: 7 }, "The saved code is selected for replacement/paste");
+  byId(view.render(), "color-group-g1-hex");
+  view.render();
+  assert.equal(state.inputs.length, 1);
+  assert.equal(view.colorEditor.input, input);
+});
+
+test("HEX submit normalizes the code and persists only its own target", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  byId(view.render(), "color-group-g1-hex").handlers.on_click({}, cx);
+  view.colorEditor.input.set_value(" #AB12cD ");
+  view.colorEditor.input.handlers.submit({}, cx);
+  assert.equal(state.saved.groups[0].color, "#ab12cd");
+  assert.equal(view.colorEditor.input.value(), "#ab12cd");
+  byId(view.render(), "color-project-server/s1-hex").handlers.on_click({}, cx);
+  view.colorEditor.input.set_value("#123456");
+  view.colorEditor.input.handlers.submit({}, cx);
+  assert.deepEqual(state.saved.projectColors, { "server/s1": "#123456" });
+  assert.equal(state.saved.groups[0].color, "#ab12cd");
+  const restored = await loadMod({ screen: "settings" }, state);
+  const tree = restored.view.render();
+  assert.deepEqual(texts(byId(tree, "color-project-server/s1-hex")), ["#123456"]);
+  assert.equal(byId(tree, "color-project-server/s1-hex").attributes.selected?.[0], true);
+});
+
+test("invalid HEX displays an error without replacing the current color", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  state.saved.projectColors = { s1: "ansi4" };
+  byId(view.render(), "color-project-s1-hex").handlers.on_click({}, cx);
+  const saved = structuredClone(state.saved);
+  for (const value of ["", "red", "#fff", "#123456ff", "#gggggg", "123456"]) {
+    view.colorEditor.input.set_value(value);
+    view.colorEditor.input.handlers.submit({}, cx);
+    assert.ok(texts(byId(view.render(), "color-project-s1-error")).join("").includes("#RRGGBB"));
+    assert.deepEqual(state.saved, saved);
+  }
+  assert.deepEqual(state.writes, []);
+});
+
+test("palette and reset synchronize an active HEX field including no-op resets", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  state.theme = { ansi4: "#123abc" };
+  byId(view.render(), "color-group-g1-hex").handlers.on_click({}, cx);
+  view.colorEditor.input.set_value("invalid");
+  view.colorEditor.input.handlers.submit({}, cx);
+  byId(view.render(), "color-group-g1-reset").handlers.on_click({}, cx);
+  assert.equal(view.colorEditor.input.value(), "");
+  assert.equal(view.colorEditor.error, "");
+  assert.deepEqual(state.writes, []);
+  byId(view.render(), "color-group-g1-ansi4").handlers.on_click({}, cx);
+  assert.equal(view.colorEditor.input.value(), "#123abc");
+  assert.equal(state.saved.groups[0].color, "ansi4");
+  byId(view.render(), "color-group-g1-reset").handlers.on_click({}, cx);
+  assert.equal(view.colorEditor.input.value(), "");
+  assert.equal(state.saved.groups[0].color, undefined);
+  state.theme.ansi4 = "#123abcff";
+  byId(view.render(), "color-group-g1-ansi4").handlers.on_click({}, cx);
+  assert.equal(view.colorEditor.input.value(), "", "Do not put an unsupported alpha code into the six-digit HEX input");
+  assert.equal(state.saved.groups[0].color, "ansi4");
+});
+
+test("HEX drafts survive unrelated shared state redraws", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  byId(view.render(), "color-project-s1-hex").handlers.on_click({}, cx);
+  const input = view.colorEditor.input;
+  input.set_value("#abcdef");
+  const other = await loadMod({ screen: "settings" }, state);
+  byId(other.view.render(), "color-group-g2-ansi2").handlers.on_click({}, other.cx);
+  view.render();
+  assert.equal(view.colorEditor.input, input);
+  assert.equal(input.value(), "#abcdef");
+  input.handlers.submit({}, cx);
+  assert.equal(state.saved.groups[1].color, "ansi2");
+  assert.equal(state.saved.projectColors.s1, "#abcdef");
+});
+
+test("stale HEX callbacks never save another editor or recreate a closed project", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  byId(view.render(), "color-group-g1-hex").handlers.on_click({}, cx);
+  const old = view.colorEditor.input;
+  old.set_value("#112233");
+  byId(view.render(), "color-project-s1-hex").handlers.on_click({}, cx);
+  const current = view.colorEditor.input;
+  current.set_value("#445566");
+  old.handlers.submit({}, cx);
+  assert.equal(old.released, true);
+  assert.deepEqual(state.writes, []);
+  state.spaces = state.spaces.filter(space => space.id !== "s1");
+  const saved = structuredClone(state.saved);
+  current.handlers.submit({}, cx);
+  assert.ok(view.colorEditor.error);
+  assert.deepEqual(state.saved, saved);
+  assert.deepEqual(state.writes, []);
+});
+
+test("settings assign independent colors to each group and full project ID", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  const tree = view.render();
+  byId(tree, "color-group-g1-ansi4").handlers.on_click({}, cx);
+  byId(tree, "color-group-g2-ansi2").handlers.on_click({}, cx);
+  byId(tree, "color-project-server/s1-ansi1").handlers.on_click({}, cx);
+  byId(tree, "color-project-s1-ansi5").handlers.on_click({}, cx);
+  assert.deepEqual(state.saved.groups.map(group => group.color), ["ansi4", "ansi2"]);
+  assert.deepEqual(state.saved.projectColors, { "server/s1": "ansi1", s1: "ansi5" });
+  assert.equal(byId(view.render(), "color-project-s1-ansi5").attributes.selected?.[0], true);
+  assert.equal(byId(view.render(), "color-project-s1-ansi4").attributes.selected?.[0], false);
+  for (const node of nodes(view.render())) assert.equal(node.attributes.aria_selected, undefined,
+    "Base Button owns selected accessibility; generic ARIA refinements are ignored");
+  assert.deepEqual(state.commands, []);
+  const restored = await loadMod({ screen: "settings" }, state);
+  assert.equal(byId(restored.view.render(), "color-group-g1-ansi4").attributes.selected?.[0], true);
+});
+
+test("color changes from two settings copies preserve fresh unrelated state", async () => {
+  const first = await groupedMod({ screen: "settings" });
+  const second = await loadMod({ screen: "settings" }, first.state);
+  const a = first.view.render(), b = second.view.render();
+  byId(a, "color-group-g1-ansi4").handlers.on_click({}, first.cx);
+  first.state.saved.groups[0].name = "Renamed elsewhere";
+  byId(b, "color-project-s1-ansi1").handlers.on_click({}, second.cx);
+  byId(a, "color-group-g2-ansi2").handlers.on_click({}, first.cx);
+  assert.equal(first.state.saved.groups[0].name, "Renamed elsewhere");
+  assert.equal(first.state.saved.groups[0].color, "ansi4");
+  assert.equal(first.state.saved.groups[1].color, "ansi2");
+  assert.equal(first.state.saved.projectColors.s1, "ansi1");
+  assert.equal(first.state.saved.assignments["offline/s9"], "g1");
+});
+
+test("resetting one color leaves other project and group colors intact", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  state.saved.groups[0].color = "ansi4";
+  state.saved.groups[1].color = "ansi2";
+  state.saved.projectColors = { s1: "ansi5", "server/s1": "ansi1", "offline/s9": "ansi6" };
+  const tree = view.render();
+  byId(tree, "color-group-g1-reset").handlers.on_click({}, cx);
+  byId(tree, "color-project-server/s1-reset").handlers.on_click({}, cx);
+  assert.equal(state.saved.groups[0].color, undefined);
+  assert.equal(state.saved.groups[1].color, "ansi2");
+  assert.deepEqual(state.saved.projectColors, { s1: "ansi5", "offline/s9": "ansi6" });
+  const writes = state.writes.length;
+  byId(view.render(), "color-project-s1-ansi5").handlers.on_click({}, cx);
+  assert.equal(state.writes.length, writes, "Clicking an already selected color must not rewrite state");
+});
+
+test("stale color controls never recreate missing targets or write invalid colors", async () => {
+  const { view, state, cx } = await groupedMod({ screen: "settings" });
+  const tree = view.render();
+  byId(tree, "color-group-g1-ansi4");
+  state.saved.groups.shift();
+  state.spaces = state.spaces.filter(space => space.id !== "s1");
+  const saved = structuredClone(state.saved);
+  byId(tree, "color-group-g1-ansi4").handlers.on_click({}, cx);
+  byId(tree, "color-project-s1-ansi1").handlers.on_click({}, cx);
+  view.changeColor("project", "s2", "background", cx);
+  view.changeColor("project", "s2", {}, cx);
+  view.changeColor("unknown", "s2", "ansi1", cx);
+  assert.deepEqual(state.saved, saved);
+  assert.deepEqual(state.writes, []);
+});
+
+test("group colors tint both its icon and border without leaking to projects", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.groups[0].color = "ansi4";
+  state.saved.projectColors = { s1: "ansi1" };
+  for (const theme of [
+    { border: "#333333", muted: "#aaaaaa", ansi4: "#8899ff", ansi1: "#ff9999", chrome: "#111111", accent: "#cccccc" },
+    { border: "#dddddd", muted: "#555555", ansi4: "#223399", ansi1: "#993333", chrome: "#ffffff", accent: "#222222" },
+  ]) {
+    state.theme = theme;
+    for (const width of [44, 268]) {
+      state.layout = sidebarLayout(width);
+      const tree = view.render();
+      assert.equal(byId(tree, "group-g1").attributes.border_color?.[0], theme.ansi4);
+      const groupIcon = nodes(byId(tree, "group-label-g1")).find(node => node.attributes.asset?.[0]?.endsWith("layers.svg"));
+      assert.equal(groupIcon.attributes.text_color?.[0], theme.ansi4);
+      assert.equal(byId(tree, "group-g2").attributes.border_color?.[0], theme.border);
+      const project = byId(tree, "project-s1");
+      if (width === 44) {
+        assert.deepEqual(texts(project), ["Lo"]);
+        assert.equal(project.childNodes[0].attributes.text_color?.[0], theme.ansi1);
+        assert.equal(project.childNodes[0].attributes.bg, undefined);
+        assert.equal(project.attributes.bg?.[0], theme.chrome);
+        assert.equal(project.attributes.border_color?.[0], theme.accent);
+        assert.equal(byId(tree, "project-s2").childNodes[0].attributes.text_color?.[0], theme.muted);
+      } else {
+        const icon = nodes(project).find(node => node.attributes.asset?.[0]?.endsWith("folder.svg"));
+        assert.equal(icon.attributes.text_color?.[0], theme.ansi1);
+        assert.equal(project.childNodes[0].attributes.text_color, undefined, "Only the icon, not the full project name, is colored");
+      }
+    }
+  }
+  assert.deepEqual(state.writes, []);
+});
+
+test("compact project icons show two case-preserving characters without a tile", async () => {
+  const { view, state } = await loadMod();
+  state.layout = sidebarLayout(44);
+  for (const [name, initials] of [["Разработка", "Ра"], ["backend-api", "ba"], ["Я", "Я"], ["", "?"], ["  Dev", "De"], ["😀X", "😀X"]]) {
+    state.spaces = [{ id: "s1", name, active: false }];
+    const project = byId(view.render(), "project-s1");
+    assert.deepEqual(texts(project), [initials]);
+    assert.equal(project.childNodes[0].attributes.w?.[0], 24);
+    assert.equal(project.childNodes[0].attributes.bg, undefined);
+    assert.ok(!nodes(project).some(node => node.attributes.asset));
+    assert.equal(project.attributes.tooltip?.[0], name);
+  }
+});
+
+test("colors survive group rename, deletion and a temporarily unavailable project", async () => {
+  const { view, state, cx } = await collapsibleMod();
+  state.saved.groups[0].color = "ansi4";
+  state.saved.projectColors = { s1: "ansi1", "offline/s9": "ansi6" };
+  view.beginGroupEdit("g1", cx);
+  view.input.set_value("Renamed");
+  view.saveGroup(cx);
+  assert.equal(state.saved.groups[0].color, "ansi4");
+  view.removeGroup("g1");
+  assert.deepEqual(state.saved.projectColors, { s1: "ansi1", "offline/s9": "ansi6" });
+  state.spaces = [];
+  const saved = structuredClone(state.saved);
+  view.render();
+  assert.deepEqual(state.saved, saved);
+});
+
+test("color settings keep a scrollable body and a separate close button", async () => {
+  const { view, state } = await groupedMod({ screen: "settings" });
+  state.spaces = Array.from({ length: 30 }, (_, i) => ({ id: `s${i}`, name: `Project ${i}` }));
+  const tree = view.render();
+  const body = byId(tree, "settings-scroll");
+  assert.ok(Object.hasOwn(body.attributes, "overflow_y_scrollbar"));
+  assert.equal(body.attributes.min_h?.[0], 0);
+  assert.ok(!nodes(body).includes(byId(tree, "settings-close")));
+  byId(tree, "color-project-s29-ansi6");
+  const panel = await loadMod();
+  byId(panel.view.render(), "project-settings").handlers.on_click({}, panel.cx);
+  assert.equal(panel.state.overlays[0].width, 560);
+  assert.equal(panel.state.overlays[0].height, 480);
+});
 
 test("project icons and group frames use theme colors in grouped and flat modes", async () => {
   const { view, state } = await collapsibleMod();

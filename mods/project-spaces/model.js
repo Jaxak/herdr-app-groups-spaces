@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 export const STATE_KEY = "project-spaces.state";
 
+export const COLORS = [
+  ["ansi6", "Бирюзовый"], ["ansi3", "Жёлтый"], ["ansi4", "Синий"],
+  ["ansi5", "Фиолетовый"], ["ansi2", "Зелёный"], ["ansi1", "Красный"],
+];
+export const isHexColor = value => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+export const isColor = value => COLORS.some(([color]) => color === value) || isHexColor(value);
+
 function groupName(state, value, exceptId) {
   const name = value.trim();
   if (!name) throw new Error("Введите название группы.");
@@ -76,7 +83,7 @@ export function readState(value) {
     if (ids.has(group.id) || names.has(group.name.trim())) continue;
     ids.add(group.id);
     names.add(group.name.trim());
-    groups.push({ id: group.id, name: group.name.trim() });
+    groups.push({ id: group.id, name: group.name.trim(), ...(isColor(group.color) ? { color: group.color } : {}) });
   }
   return {
     settings: {
@@ -85,6 +92,8 @@ export function readState(value) {
     },
     groups,
     nextGroupId,
+    projectColors: Object.fromEntries(Object.entries(record(raw.projectColors) ? raw.projectColors : {})
+      .filter(([id, color]) => id.length > 0 && isColor(color))),
     assignments: Object.fromEntries(Object.entries(record(raw.assignments) ? raw.assignments : {})
       .filter(([space, group]) => space.length > 0 && ids.has(group))),
     collapsedGroups: strings(raw.collapsedGroups).filter(id => ids.has(id)),
