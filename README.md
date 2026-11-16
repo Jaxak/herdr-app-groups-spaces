@@ -1,5 +1,48 @@
 # Herdr App Groups & Spaces
 
+## Установка
+
+Запустите Herdr App и передайте этот промпт агенту, у которого есть доступ
+к терминалу и файлам приложения. Промпт разрешает установку мода, создание
+и активацию личной копии текущего layout; исходный layout сохраняется.
+
+```text
+Установи Project Spaces из https://github.com/Jaxak/herdr-app-groups-spaces.
+Создай личную копию текущего активного layout, встрои в неё Project Spaces
+и активируй эту копию.
+
+1. Определи Herdr home: HERDR_APP_HOME, если задан, иначе ~/.config/herdr-app.
+   Прочитай его AGENTS.md и нужные разделы актуальных *.d.ts, затем README,
+   CONTRIBUTING.md и исходники мода в репозитории. Моды — доверенный код; npm install не требуется.
+   Если Herdr не запущен или недоступен, остановись и попроси владельца запустить его.
+2. Через herdr-app status узнай текущий layout и запомни его имя для отката.
+   Сохрани резервные копии изменяемых файлов вне репозитория по CONTRIBUTING.md.
+   Если мод project-spaces уже установлен, сравни его с исходниками: идентичную
+   копию используй повторно, а обновление отличающейся копии сначала согласуй.
+3. Установи мод в <Herdr home>/mods/project-spaces. Включи только JS, SVG,
+   mod.json, LICENSE-*, THIRD-PARTY-NOTICES.md и корневой NOTICE; generated SDK
+   и локальную конфигурацию не копируй. Выполни herdr-app check для установленной папки.
+4. Штатной командой layout.clone создай копию именно текущего layout из status,
+   а не заранее выбранного main. Выбери свободное имя, например <текущий>-project-spaces.
+   Учти: layout.clone сразу активирует копию и переносит её настройки отображения.
+5. Меняй только копию: замени content.mod штатной панели spaces на project-spaces,
+   сохрани остальные панели, props, размеры, оформление и идентификаторы узлов.
+   Если project-spaces уже подключён, сохрани его блок. Если подходящей панели нет
+   или место замены неоднозначно, сначала согласуй размещение с владельцем.
+6. После интеграции активируй подготовленную копию через layout.switch.
+   Проверь herdr-app status без ошибок, сохрани и просмотри снимок через herdr-app shot.
+   При ошибке загрузки верни исходный layout и сообщи причину.
+7. Сообщи имя активированной копии, путь мода и резервной копии, результаты
+   проверок и точную команду возврата на исходный layout. Отдельно укажи,
+   какие сценарии ручной приёмки остались непроверенными.
+
+Исходный layout, штатные моды и пользовательские данные оставь неизменными.
+Shared state не редактируй файлами. Рабочие spaces и терминалы не создавай
+и не закрывай, Herdr не перезапускай. Указатель и клавиатуру рабочего дисплея
+не автоматизируй; для ручной проверки попроси владельца выполнить нужные действия.
+Приватные снимки и резервные копии держи вне git и не публикуй.
+```
+
 [![CI](https://github.com/Jaxak/herdr-app-groups-spaces/actions/workflows/ci.yml/badge.svg)](https://github.com/Jaxak/herdr-app-groups-spaces/actions/workflows/ci.yml)
 
 **Project Spaces** — независимая панель проектов для [Herdr](https://herdr.dev).
@@ -57,19 +100,24 @@ worktree-действия. Не испытывайте эти действия �
 Сначала сохраните резервную копию конфигурации и shared state **вне репозитория**.
 Порядок резервирования и восстановления — в [CONTRIBUTING.md](CONTRIBUTING.md#работа-с-конфигурацией-herdr).
 
-Команды ниже выполняются **в Bash из корня репозитория**. Herdr должен быть запущен.
-Посмотрите имя текущего layout: оно понадобится для возврата.
+Команды ниже выполняются **в Bash из корня репозитория**, с Node.js 22+.
+Herdr должен быть запущен. Посмотрите имя текущего layout: оно понадобится для возврата.
 
 ```sh
 herdr-app status
 ```
 
 Следующий блок откажется перезаписывать существующий мод или layout. Клонирование
-**сразу переключает окно** на копию layout `main`; проекты и терминалы не закрываются.
+**сразу переключает окно** на копию текущего активного layout; проекты и терминалы не закрываются.
 
 ```bash
 (
-  set -eu
+  set -euo pipefail
+  current_layout="$(herdr-app status | node -e '
+    const { layout } = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    if (typeof layout !== "string" || !layout) process.exit(1);
+    process.stdout.write(layout);
+  ')"
   herdr_home="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
   target="$herdr_home/mods/project-spaces"
   test -d "$herdr_home/mods"
@@ -82,14 +130,14 @@ herdr-app status
     mods/project-spaces/mod.json mods/project-spaces/LICENSE-* \
     mods/project-spaces/THIRD-PARTY-NOTICES.md NOTICE "$target/"
   herdr-app check "$target"
-  herdr-app do layout.clone '{"name":"main","as":"project-workspace"}'
+  herdr-app do layout.clone --name "$current_layout" --as project-workspace
 )
 ```
 
 В `<Herdr home>/layouts/project-workspace.json` (`$HERDR_APP_HOME` или
 `~/.config/herdr-app`) найдите
 блок с `"content": { "mod": "spaces" }` и замените **только** значение мода на
-`"project-spaces"`. Остальные поля сохраните. Штатный layout `main` и мод
+`"project-spaces"`. Остальные поля сохраните. Исходный layout и штатный мод
 `spaces` не редактируйте. `place: "none"` не добавляет панель автоматически.
 
 Если имя мода или layout занято, сначала выясните, кому принадлежит копия.
