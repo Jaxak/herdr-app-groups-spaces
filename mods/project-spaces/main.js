@@ -10,16 +10,17 @@ const TREE_INDENT = ROW_ICON_SIZE;
 const DISCLOSURE_WIDTH = 24;
 const ROW_ICON_GAP = 5;
 const NEW_PROJECT_KEY = "project-spaces.new";
+const OUTLINE_GRAY = "#404040";
 
 function colorValue(t, color, fallback) {
   return isHexColor(color) ? color : t[color] ?? fallback;
 }
 
-function sectionOutline(element, t, style, color, accentId) {
+function sectionOutline(element, style, color, accentId) {
   return element.border_color(color)
     .when(style === "stripe", el => el.border_l(2))
     .when(style === "frame", el => el.border_1().rounded(6))
-    .when(style === "accent-frame", el => el.relative().border_1().border_l(2).border_color(t.border)
+    .when(style === "accent-frame", el => el.relative().border_1().border_l(2).border_color(OUTLINE_GRAY)
       // GPUI has one border color per element; overlay the colored left edge.
       .child(div().id(accentId).absolute().top(-1).bottom(-1).left(-2).right(-1).border_l(2).border_color(color)));
 }
@@ -225,8 +226,8 @@ export default class ProjectSpaces extends View {
           .child(div().flex_1().min_w(0).truncate().child(tab.name || String(tab.index))),
         (_event, cx) => this.selectTerminal(project.id, tab.id, pane.pane, cx))
         .ml(TREE_INDENT).min_w(0).justify_start().selected(false).bg(t.chrome)))
-      .when(!compact && project.active, el => sectionOutline(el, t, state.settings.groupBorderStyle,
-        colorValue(t, state.projectColors[project.id], t.border), `project-accent-${project.id}`).pb(5));
+      .when(!compact && project.active, el => sectionOutline(el, state.settings.groupBorderStyle,
+        colorValue(t, state.projectColors[project.id], OUTLINE_GRAY), `project-accent-${project.id}`).pb(5));
   }
 
   startDrag(kind, id, event, cx) {
@@ -502,11 +503,11 @@ export default class ProjectSpaces extends View {
           const content = v_flex().gap(4).when(compact, el => el.w_full().items_center().flex_none());
           const collapsed = section.id && state.collapsedGroups.includes(section.id);
           if (section.id) {
-            const color = colorValue(t, section.color, t.border);
+            const color = colorValue(t, section.color, OUTLINE_GRAY);
             content.id(`group-${section.id}`).pb(5)
               .when(compact, el => el.border_l(1).pr(1).border_color(color))
               .child(!compact && this.editing?.group === section.id ? this.renderEditor(t) : this.renderGroupHeader(t, section, collapsed, compact))
-              .when(!compact, el => sectionOutline(el, t, state.settings.groupBorderStyle, color, `group-accent-${section.id}`));
+              .when(!compact, el => sectionOutline(el, state.settings.groupBorderStyle, color, `group-accent-${section.id}`));
           }
           return content.children(collapsed ? [] : section.projects.map(project =>
             this.renderProject(t, project, terminals.get(project.id) ?? [], state, Boolean(section.id), compact)));

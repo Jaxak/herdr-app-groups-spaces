@@ -582,7 +582,7 @@ test("expanded groups default to a straight 2px stripe including empty and colla
       assert.equal(group.attributes.border_1, undefined);
       assert.equal(group.attributes.rounded, undefined);
       assert.equal(group.attributes.pb?.[0], 5);
-      assert.equal(group.attributes.border_color?.[0], id === "g1" ? state.theme.ansi4 : state.theme.border);
+      assert.equal(group.attributes.border_color?.[0], id === "g1" ? state.theme.ansi4 : "#404040");
       byId(group, `group-header-${id}`);
     }
     assert.equal(hasId(byId(tree, "group-g1"), "project-s1"), !collapsed.length);
@@ -605,7 +605,7 @@ test("accent frames have square corners with neutral outlines and a colored 2px 
   const { view, state } = await collapsibleMod();
   state.saved.settings.groupBorderStyle = "accent-frame";
   state.saved.groups.push({ id: "g3", name: "Empty" });
-  for (const border of ["#333333", "#dddddd"]) {
+  for (const border of ["#333333", "#dddddd", "#ffffff18", "#00000018"]) {
     state.theme = { border, muted: "#888888", ansi4: "#4455aa" };
     for (const color of [undefined, "ansi4", "#12ABef"]) {
       state.saved.groups[0].color = color;
@@ -616,7 +616,7 @@ test("accent frames have square corners with neutral outlines and a colored 2px 
           const group = byId(tree, `group-${id}`);
           assert.ok(Object.hasOwn(group.attributes, "border_1"));
           assert.equal(group.attributes.border_l?.[0], 2);
-          assert.equal(group.attributes.border_color?.[0], border);
+          assert.equal(group.attributes.border_color?.[0], "#404040");
           assert.equal(group.attributes.rounded, undefined);
           assert.equal(group.attributes.pb?.[0], 5);
           assert.ok(Object.hasOwn(group.attributes, "relative"));
@@ -624,7 +624,7 @@ test("accent frames have square corners with neutral outlines and a colored 2px 
           assert.ok(Object.hasOwn(accent.attributes, "absolute"));
           assert.equal(accent.attributes.border_l?.[0], 2);
           assert.equal(accent.attributes.border_1, undefined);
-          assert.equal(accent.attributes.border_color?.[0], id === "g1" && color ? state.theme[color] ?? color : border);
+          assert.equal(accent.attributes.border_color?.[0], id === "g1" && color ? state.theme[color] ?? color : "#404040");
           assert.equal(accent.attributes.rounded, undefined);
           for (const side of ["top", "bottom", "right"]) assert.equal(accent.attributes[side]?.[0], -1);
           assert.equal(accent.attributes.left?.[0], -2);
@@ -696,8 +696,8 @@ test("active project outline follows group styles around its expanded terminals 
         for (const attribute of ["border_1", "border_l", "rounded", "pb"]) {
           assert.deepEqual(content.attributes[attribute], group.attributes[attribute]);
         }
-        const expectedColor = color ? theme[color] ?? color : theme.border;
-        assert.equal(content.attributes.border_color?.[0], style === "accent-frame" ? theme.border : expectedColor);
+        const expectedColor = color ? theme[color] ?? color : "#404040";
+        assert.equal(content.attributes.border_color?.[0], style === "accent-frame" ? "#404040" : expectedColor);
         if (style === "accent-frame") {
           const accent = byId(content, "project-accent-s1");
           assert.equal(accent.attributes.border_color?.[0], expectedColor);
@@ -755,7 +755,7 @@ test("active project outline remains when its terminals are collapsed hidden or 
     const content = byId(view.render(), "project-s1-content");
     assert.equal(content.attributes.border_l?.[0], 2);
     assert.ok(Object.hasOwn(content.attributes, "border_1"));
-    assert.equal(byId(content, "project-accent-s1").attributes.border_color?.[0], state.theme.border);
+    assert.equal(byId(content, "project-accent-s1").attributes.border_color?.[0], "#404040");
     assert.deepEqual(terminalIds(content), []);
     byId(content, "project-s1");
   }
@@ -774,7 +774,7 @@ test("compact sidebar draws groups with only a neutral left border", async () =>
       const group = byId(tree, `group-${id}`);
       assert.equal(group.attributes.border_l?.[0], 1);
       assert.equal(group.attributes.pr?.[0], 1, "Balance the left border so grouped and root icons share one center");
-      assert.equal(group.attributes.border_color?.[0], state.theme.border);
+      assert.equal(group.attributes.border_color?.[0], "#404040");
       assert.equal(group.attributes.border_1, undefined);
       assert.equal(group.attributes.rounded, undefined);
       for (const action of ["add", "edit", "delete"]) assert.ok(!hasId(tree, `group-${action}-${id}`));
@@ -1128,7 +1128,7 @@ test("group colors tint both its icon and border without leaking to projects", a
       assert.equal(byId(tree, "group-g1").attributes.border_color?.[0], theme.ansi4);
       const groupIcon = nodes(byId(tree, "group-label-g1")).find(node => node.attributes.asset?.[0]?.endsWith("layers.svg"));
       assert.equal(groupIcon.attributes.text_color?.[0], theme.ansi4);
-      assert.equal(byId(tree, "group-g2").attributes.border_color?.[0], theme.border);
+      assert.equal(byId(tree, "group-g2").attributes.border_color?.[0], "#404040");
       const project = byId(tree, "project-s1");
       if (width === 44) {
         assert.deepEqual(texts(project), ["Lo"]);
@@ -1192,7 +1192,7 @@ test("color settings keep a scrollable body and a separate close button", async 
   assert.equal(panel.state.overlays[0].height, 480);
 });
 
-test("project icons and group frames use theme colors in grouped and flat modes", async () => {
+test("project icons follow the theme while neutral group frames keep opaque gray", async () => {
   const { view, state } = await collapsibleMod();
   state.saved.settings.groupBorderStyle = "frame";
   state.saved.groups.push({ id: "g3", name: "Empty" });
@@ -1208,7 +1208,7 @@ test("project icons and group frames use theme colors in grouped and flat modes"
     for (const id of ["g1", "g2", "g3"]) {
       const group = byId(tree, `group-${id}`);
       assert.ok(Object.hasOwn(group.attributes, "border_1"));
-      assert.equal(group.attributes.border_color?.[0], theme.border);
+      assert.equal(group.attributes.border_color?.[0], "#404040");
       assert.equal(group.attributes.rounded?.[0], 6);
       assert.equal(group.attributes.pb?.[0], 5, "The last selected row must not touch the group border");
       const icon = nodes(group.childNodes[0]).find(node => node.attributes.asset?.[0] === "mods/workspace-chrome/layers.svg");
@@ -1591,7 +1591,7 @@ test("accent frames retain full header highlighting while accepting a dragged pr
   assert.ok(Object.hasOwn(header.attributes, "border_1"));
   assert.equal(header.attributes.border_color?.[0], state.theme.accent);
   assert.equal(header.attributes.bg?.[0], state.theme.selected);
-  assert.equal(byId(tree, "group-g2").attributes.border_color?.[0], state.theme.border);
+  assert.equal(byId(tree, "group-g2").attributes.border_color?.[0], "#404040");
   assert.equal(byId(tree, "group-accent-g2").attributes.border_color?.[0], state.theme.ansi4);
   release(fixture, "group-header-g2");
   assert.equal(state.saved.assignments.s1, "g2");
