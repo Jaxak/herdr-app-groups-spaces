@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 AND MIT
 // Modified for Project Spaces; adapted toolbar/drag-and-drop: see THIRD-PARTY-NOTICES.md.
 import { View, div, svg, image } from "gpui-kit";
-import { h_flex, v_flex, Switch, Button, InputState, Input } from "gpui-base";
+import { h_flex, v_flex, Switch, RadioGroup, Radio, Button, InputState, Input } from "gpui-base";
 import { spaces, panes, theme, props, run, openOverlay, closeOverlay, shared, setShared, layout } from "herdr";
 import { STATE_KEY, COLORS, isColor, isHexColor, readState, createGroup, renameGroup, deleteGroup, projectSections, terminalRows } from "./model.js";
 
@@ -13,6 +13,15 @@ const NEW_PROJECT_KEY = "project-spaces.new";
 
 function colorValue(t, color, fallback) {
   return isHexColor(color) ? color : t[color] ?? fallback;
+}
+
+function sectionOutline(element, t, style, color, accentId) {
+  return element.border_color(color)
+    .when(style === "stripe", el => el.border_l(2))
+    .when(style === "frame", el => el.border_1().rounded(6))
+    .when(style === "accent-frame", el => el.relative().border_1().border_l(2).border_color(t.border)
+      // GPUI has one border color per element; overlay the colored left edge.
+      .child(div().id(accentId).absolute().top(-1).bottom(-1).left(-2).right(-1).border_l(2).border_color(color)));
 }
 
 function find(node, id) {
@@ -189,8 +198,8 @@ export default class ProjectSpaces extends View {
       .child(button(this, t, `project-${project.id}`, label, () => {
         if (this.suppressClick) return;
         if (spaces().some(space => space.id === project.id)) run("space.select", { id: project.id });
-      }).flex_1().min_w(0).justify_start().selected(!compact && project.active).bg(!compact && project.active ? t.selected : t.chrome)
-        .tooltip(project.name).accessibility_label(compact && project.active ? `${project.name}, активный проект` : project.name)
+      }).flex_1().min_w(0).justify_start().selected(false).bg(t.chrome)
+        .tooltip(project.name).accessibility_label(project.active ? `${project.name}, активный проект` : project.name)
         .when(compact, el => el.flex_none().w(32).h(28).px(0).pr(2).justify_center()
           .border_l(2).rounded(0).border_color(project.active ? t.accent : t.chrome))
         .on_mouse_down("left", (event, cx) => this.startDrag("project", project.id, event, cx))
@@ -215,8 +224,9 @@ export default class ProjectSpaces extends View {
               : image(pane.program.icon).size(ROW_ICON_SIZE).flex_none())
           .child(div().flex_1().min_w(0).truncate().child(tab.name || String(tab.index))),
         (_event, cx) => this.selectTerminal(project.id, tab.id, pane.pane, cx))
-        .ml(TREE_INDENT).min_w(0).justify_start()
-        .selected(pane.focused).bg(pane.focused ? t.selected : t.chrome)));
+        .ml(TREE_INDENT).min_w(0).justify_start().selected(false).bg(t.chrome)))
+      .when(!compact && project.active, el => sectionOutline(el, t, state.settings.groupBorderStyle,
+        colorValue(t, state.projectColors[project.id], t.border), `project-accent-${project.id}`).pb(5));
   }
 
   startDrag(kind, id, event, cx) {
@@ -410,9 +420,9 @@ export default class ProjectSpaces extends View {
       .when(Boolean(editor?.error), el => el.child(div().id(`${id}-error`).text_size(11).text_color(t.ansi1).child(editor.error)));
   }
 
-  changeSetting(name, checked) {
+  changeSetting(name, value) {
     const state = readState(shared(STATE_KEY));
-    state.settings[name] = checked;
+    state.settings[name] = value;
     setShared(STATE_KEY, state);
   }
 
@@ -437,6 +447,18 @@ export default class ProjectSpaces extends View {
               .child(div().flex_1().child(label))
               .child(div().text_color(state.settings[name] ? t.accent : t.muted)
                 .child(state.settings[name] ? "Вкл." : "Выкл.")))))
+          .child(v_flex().flex_none().gap(6)
+            .child(div().font_semibold().child("Оформление групп"))
+            .child(RadioGroup.new("setting-groupBorderStyle").h_flex().gap(8).axis("horizontal")
+              .accessibility_label("Оформление групп")
+              .children([
+                ["stripe", "Вертикальная полоса"], ["frame", "Полная рамка"], ["accent-frame", "Рамка с акцентом"],
+              ].map(([value, label]) =>
+                Radio.new(`setting-groupBorderStyle-${value}`).flex_1().min_w(0).py(8).px(10).rounded(6)
+                  .checked(state.settings.groupBorderStyle === value).accessibility_label(label).cursor_pointer()
+                  .bg(state.settings.groupBorderStyle === value ? t.selected : t.raised)
+                  .text_color(state.settings.groupBorderStyle === value ? t.accent : t.foreground)
+                  .on_change(() => this.changeSetting("groupBorderStyle", value)).child(label)))))
           .children([
             ["group", "Цвета групп", state.groups],
             ["project", "Цвета проектов", spaces()],
@@ -480,10 +502,11 @@ export default class ProjectSpaces extends View {
           const content = v_flex().gap(4).when(compact, el => el.w_full().items_center().flex_none());
           const collapsed = section.id && state.collapsedGroups.includes(section.id);
           if (section.id) {
-            content.id(`group-${section.id}`).border_color(colorValue(t, section.color, t.border)).pb(5)
-              .when(compact, el => el.border_l(1).pr(1))
-              .when(!compact, el => el.border_1().rounded(6))
-              .child(!compact && this.editing?.group === section.id ? this.renderEditor(t) : this.renderGroupHeader(t, section, collapsed, compact));
+            const color = colorValue(t, section.color, t.border);
+            content.id(`group-${section.id}`).pb(5)
+              .when(compact, el => el.border_l(1).pr(1).border_color(color))
+              .child(!compact && this.editing?.group === section.id ? this.renderEditor(t) : this.renderGroupHeader(t, section, collapsed, compact))
+              .when(!compact, el => sectionOutline(el, t, state.settings.groupBorderStyle, color, `group-accent-${section.id}`));
           }
           return content.children(collapsed ? [] : section.projects.map(project =>
             this.renderProject(t, project, terminals.get(project.id) ?? [], state, Boolean(section.id), compact)));

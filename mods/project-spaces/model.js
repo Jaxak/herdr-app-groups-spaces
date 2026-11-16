@@ -89,6 +89,7 @@ export function readState(value) {
     settings: {
       groupProjects: typeof raw.settings?.groupProjects === "boolean" ? raw.settings.groupProjects : true,
       showTerminals: typeof raw.settings?.showTerminals === "boolean" ? raw.settings.showTerminals : true,
+      groupBorderStyle: ["frame", "accent-frame"].includes(raw.settings?.groupBorderStyle) ? raw.settings.groupBorderStyle : "stripe",
     },
     groups,
     nextGroupId,

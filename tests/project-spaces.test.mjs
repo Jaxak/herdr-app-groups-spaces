@@ -46,6 +46,8 @@ async function loadMod(props = {}, state = { spaces: [], commands: [], overlays:
     "gpui-base": {
       h_flex: element, v_flex: element,
       Switch: { new: id => element().id(id) },
+      RadioGroup: { new: id => element().id(id) },
+      Radio: { new: id => element().id(id) },
       Button: { new: id => element().id(id) },
       Input: { new: () => element() },
       InputState: { new: ({ value = "" } = {}) => {
@@ -185,7 +187,7 @@ test("settings persist false independently and preserve project data", async () 
   const secondTree = second.view.render();
   byId(firstTree, "setting-groupProjects").handlers.on_change(false, first.cx);
   byId(secondTree, "setting-showTerminals").handlers.on_change(false, second.cx);
-  assert.deepEqual(first.state.saved.settings, { groupProjects: false, showTerminals: false });
+  assert.deepEqual(first.state.saved.settings, { groupProjects: false, showTerminals: false, groupBorderStyle: "stripe" });
   assert.deepEqual(first.state.saved.groups, [{ id: "g1", name: "Work" }]);
   assert.deepEqual(first.state.saved.assignments, { s1: "g1", "server/s1": "g1" });
   assert.deepEqual(first.state.saved.collapsedGroups, ["g1"]);
@@ -194,6 +196,65 @@ test("settings persist false independently and preserve project data", async () 
   assert.equal(byId(restored.view.render(), "setting-groupProjects").attributes.checked[0], false);
   assert.equal(byId(restored.view.render(), "setting-showTerminals").attributes.checked[0], false);
   assert.equal(first.state.writes.length, 2);
+});
+
+test("group border style defaults to stripe and validates persisted choices", () => {
+  for (const raw of [undefined, null, [], "invalid", {}, { settings: null }]) {
+    assert.equal(readState(raw).settings.groupBorderStyle, "stripe");
+  }
+  for (const value of [undefined, null, true, false, 2, "", "border", "FRAME", {}, []]) {
+    assert.equal(readState({ settings: { groupBorderStyle: value } }).settings.groupBorderStyle, "stripe");
+  }
+  for (const value of ["stripe", "frame", "accent-frame"]) {
+    assert.equal(readState({ settings: { groupBorderStyle: value } }).settings.groupBorderStyle, value);
+  }
+});
+
+test("group border settings expose three labeled choices with stripe selected by default", async () => {
+  const { view, state } = await loadMod({ screen: "settings" });
+  const tree = view.render();
+  assert.ok(texts(tree).includes("Оформление групп"));
+  const group = byId(tree, "setting-groupBorderStyle");
+  assert.equal(group.attributes.accessibility_label?.[0], "Оформление групп");
+  for (const [value, label] of [["stripe", "Вертикальная полоса"], ["frame", "Полная рамка"], ["accent-frame", "Рамка с акцентом"]]) {
+    const option = byId(group, `setting-groupBorderStyle-${value}`);
+    assert.equal(option.attributes.checked?.[0], value === "stripe");
+    assert.equal(option.attributes.accessibility_label?.[0], label);
+    assert.ok(texts(option).includes(label));
+  }
+  assert.deepEqual(state.writes, []);
+  assert.equal(state.inputs.length, 0);
+});
+
+test("group border choices persist from stale settings while preserving current project state", async () => {
+  const panel = await collapsibleMod();
+  const { state } = panel;
+  const settings = await loadMod({ screen: "settings" }, state);
+  const staleTree = settings.view.render();
+  state.saved.settings.groupProjects = false;
+  state.saved.settings.showTerminals = false;
+  state.saved.groups[0].color = "ansi4";
+  state.saved.projectColors = { "server/s1": "#123456", "offline/s9": "ansi6" };
+  state.saved.collapsedGroups = ["g2"];
+  state.saved.collapsedProjects = ["s2"];
+  const saved = readState(state.saved);
+  for (const value of ["frame", "accent-frame", "stripe"]) {
+    const currentTree = settings.view.render();
+    assert.notEqual(byId(currentTree, `setting-groupBorderStyle-${value}`).attributes.disabled?.[0], true);
+    byId(staleTree, `setting-groupBorderStyle-${value}`).handlers.on_change(true, settings.cx);
+    assert.deepEqual(state.saved, { ...saved, settings: { ...saved.settings, groupBorderStyle: value } });
+    assert.ok(!hasId(panel.view.render(), "group-g1"));
+    const restored = await loadMod({ screen: "settings" }, state);
+    const restoredTree = restored.view.render();
+    for (const option of ["stripe", "frame", "accent-frame"]) {
+      assert.equal(byId(restoredTree, `setting-groupBorderStyle-${option}`).attributes.checked?.[0], option === value);
+    }
+    byId(staleTree, "setting-groupProjects").handlers.on_change(true);
+    const group = byId(panel.view.render(), "group-g1");
+    assert.equal(group.attributes.border_l?.[0], value === "frame" ? undefined : 2);
+    assert.equal(group.attributes.rounded?.[0], value === "frame" ? 6 : undefined);
+    byId(staleTree, "setting-groupProjects").handlers.on_change(false);
+  }
 });
 
 test("malformed persisted fields fall back safely without render writes", async () => {
@@ -334,8 +395,8 @@ test("terminal rows follow project tabs then pane order and exclude mod or orpha
   assert.deepEqual(texts(byId(local, "terminal-pane2")), ["2"]);
   assert.deepEqual(texts(byId(local, "terminal-pane3")), ["Shells"]);
   assert.deepEqual(texts(byId(local, "terminal-server/pane1")), ["Remote tab"]);
-  assert.equal(byId(tree, "terminal-pane1").attributes.selected[0], true);
-  assert.equal(byId(tree, "terminal-pane2").attributes.selected[0], false);
+  assert.equal(byId(tree, "terminal-pane1").attributes.selected?.[0] ?? false, false);
+  assert.equal(byId(tree, "terminal-pane2").attributes.selected?.[0] ?? false, false);
   assert.equal(state.paneReads, 1);
   assert.deepEqual(state.commands, []);
   assert.deepEqual(state.writes, []);
@@ -507,6 +568,202 @@ function sidebarLayout(width) {
   ] }] };
 }
 
+test("expanded groups default to a straight 2px stripe including empty and collapsed groups", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.groups.push({ id: "g3", name: "Empty" });
+  state.saved.groups[0].color = "ansi4";
+  state.theme = { border: "#333333", ansi4: "#4455aa" };
+  for (const collapsed of [[], ["g1"]]) {
+    state.saved.collapsedGroups = collapsed;
+    const tree = view.render();
+    for (const id of ["g1", "g2", "g3"]) {
+      const group = byId(tree, `group-${id}`);
+      assert.equal(group.attributes.border_l?.[0], 2);
+      assert.equal(group.attributes.border_1, undefined);
+      assert.equal(group.attributes.rounded, undefined);
+      assert.equal(group.attributes.pb?.[0], 5);
+      assert.equal(group.attributes.border_color?.[0], id === "g1" ? state.theme.ansi4 : state.theme.border);
+      byId(group, `group-header-${id}`);
+    }
+    assert.equal(hasId(byId(tree, "group-g1"), "project-s1"), !collapsed.length);
+    assert.equal(hasId(byId(tree, "group-g1"), "terminal-pane1"), !collapsed.length);
+    if (!collapsed.length) {
+      assert.equal(byId(tree, "project-s1-content").attributes.ml?.[0], 14);
+      assert.equal(byId(tree, "terminal-pane1").attributes.ml?.[0], 14);
+    }
+    const root = byId(tree, "project-s2-content");
+    assert.equal(root.attributes.ml?.[0], 0);
+    assert.equal(root.attributes.border_l, undefined);
+    assert.equal(root.attributes.border_1, undefined);
+  }
+  state.saved.settings.groupProjects = false;
+  assert.ok(!nodes(view.render()).some(node => node.attributes.id?.[0]?.startsWith("group-")));
+  assert.deepEqual(state.writes, []);
+});
+
+test("accent frames have square corners with neutral outlines and a colored 2px left edge", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.settings.groupBorderStyle = "accent-frame";
+  state.saved.groups.push({ id: "g3", name: "Empty" });
+  for (const border of ["#333333", "#dddddd"]) {
+    state.theme = { border, muted: "#888888", ansi4: "#4455aa" };
+    for (const color of [undefined, "ansi4", "#12ABef"]) {
+      state.saved.groups[0].color = color;
+      for (const collapsed of [[], ["g1"]]) {
+        state.saved.collapsedGroups = collapsed;
+        const tree = view.render();
+        for (const id of ["g1", "g2", "g3"]) {
+          const group = byId(tree, `group-${id}`);
+          assert.ok(Object.hasOwn(group.attributes, "border_1"));
+          assert.equal(group.attributes.border_l?.[0], 2);
+          assert.equal(group.attributes.border_color?.[0], border);
+          assert.equal(group.attributes.rounded, undefined);
+          assert.equal(group.attributes.pb?.[0], 5);
+          assert.ok(Object.hasOwn(group.attributes, "relative"));
+          const accent = byId(group, `group-accent-${id}`);
+          assert.ok(Object.hasOwn(accent.attributes, "absolute"));
+          assert.equal(accent.attributes.border_l?.[0], 2);
+          assert.equal(accent.attributes.border_1, undefined);
+          assert.equal(accent.attributes.border_color?.[0], id === "g1" && color ? state.theme[color] ?? color : border);
+          assert.equal(accent.attributes.rounded, undefined);
+          for (const side of ["top", "bottom", "right"]) assert.equal(accent.attributes[side]?.[0], -1);
+          assert.equal(accent.attributes.left?.[0], -2);
+          assert.deepEqual(accent.handlers, {});
+          byId(group, `group-header-${id}`);
+        }
+        const icon = nodes(byId(tree, "group-label-g1")).find(node => node.attributes.asset?.[0]?.endsWith("layers.svg"));
+        assert.equal(icon.attributes.text_color?.[0], color ? state.theme[color] ?? color : state.theme.muted);
+        assert.equal(hasId(byId(tree, "group-g1"), "terminal-pane1"), !collapsed.length);
+        assert.ok(!hasId(byId(tree, "project-s2-content"), "group-accent-g1"));
+      }
+    }
+  }
+  state.saved.settings.groupProjects = false;
+  const flat = view.render();
+  assert.ok(!nodes(flat).some(node => node.attributes.id?.[0]?.startsWith("group-")));
+  assert.ok(!hasId(flat, "group-accent-g1"));
+  assert.deepEqual(state.writes, []);
+});
+
+test("compact groups ignore the border choice and restore it on expansion", async () => {
+  const { view, state } = await collapsibleMod();
+  for (const value of ["stripe", "frame", "accent-frame"]) {
+    state.saved.settings.groupBorderStyle = value;
+    const saved = structuredClone(state.saved);
+    for (const width of [44, 76, 159]) {
+      state.layout = sidebarLayout(width);
+      const tree = view.render();
+      const group = byId(tree, "group-g1");
+      const project = byId(tree, "project-s1-content");
+      assert.equal(project.attributes.border_1, undefined);
+      assert.equal(project.attributes.border_l, undefined);
+      assert.ok(!hasId(project, "project-accent-s1"));
+      assert.equal(byId(tree, "project-s1").attributes.border_l?.[0], 2);
+      assert.equal(group.attributes.border_l?.[0], 1);
+      assert.equal(group.attributes.pr?.[0], 1);
+      assert.equal(group.attributes.border_1, undefined);
+      assert.equal(group.attributes.rounded, undefined);
+      assert.ok(!hasId(group, "group-accent-g1"));
+    }
+    state.layout = sidebarLayout(160);
+    const tree = view.render();
+    const group = byId(tree, "group-g1");
+    assert.equal(group.attributes.border_l?.[0], value === "frame" ? undefined : 2);
+    assert.equal(Object.hasOwn(group.attributes, "border_1"), value !== "stripe");
+    assert.equal(group.attributes.rounded?.[0], value === "frame" ? 6 : undefined);
+    assert.equal(hasId(group, "group-accent-g1"), value === "accent-frame");
+    byId(group, "terminal-pane1");
+    assert.deepEqual(state.saved, saved);
+  }
+  assert.deepEqual(state.writes, []);
+});
+
+test("active project outline follows group styles around its expanded terminals without fills", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.groups[0].color = "ansi4";
+  for (const style of ["stripe", "frame", "accent-frame"]) {
+    state.saved.settings.groupBorderStyle = style;
+    for (const theme of [
+      { border: "#333333", chrome: "#111111", selected: "#222244", accent: "#6688ff", ansi1: "#ff6655", ansi4: "#4455aa" },
+      { border: "#cccccc", chrome: "#ffffff", selected: "#ddddff", accent: "#3344aa", ansi1: "#aa2211", ansi4: "#223377" },
+    ]) {
+      state.theme = theme;
+      for (const color of [undefined, "ansi1", "#12ABef"]) {
+        state.saved.projectColors = color ? { s1: color } : {};
+        const tree = view.render();
+        const content = byId(tree, "project-s1-content");
+        const group = byId(tree, "group-g1");
+        for (const attribute of ["border_1", "border_l", "rounded", "pb"]) {
+          assert.deepEqual(content.attributes[attribute], group.attributes[attribute]);
+        }
+        const expectedColor = color ? theme[color] ?? color : theme.border;
+        assert.equal(content.attributes.border_color?.[0], style === "accent-frame" ? theme.border : expectedColor);
+        if (style === "accent-frame") {
+          const accent = byId(content, "project-accent-s1");
+          assert.equal(accent.attributes.border_color?.[0], expectedColor);
+          assert.equal(accent.attributes.border_l?.[0], 2);
+          assert.equal(accent.attributes.rounded, undefined);
+        } else assert.ok(!hasId(content, "project-accent-s1"));
+        byId(content, "project-s1");
+        assert.equal(terminalIds(content).length, 3);
+        for (const id of ["project-s1", ...terminalIds(content)]) {
+          const row = byId(content, id);
+          assert.equal(row.attributes.bg?.[0], theme.chrome);
+          assert.equal(row.attributes.selected?.[0] ?? false, false);
+        }
+        assert.ok(byId(content, "project-s1").attributes.accessibility_label?.[0].includes("активный проект"));
+        for (const id of ["s2", "server/s1"]) {
+          const inactive = byId(tree, `project-${id}-content`);
+          assert.equal(inactive.attributes.border_l, undefined);
+          assert.equal(inactive.attributes.border_1, undefined);
+        }
+      }
+    }
+  }
+  assert.deepEqual(state.writes, []);
+  assert.deepEqual(state.commands, []);
+});
+
+test("active project outline tracks live activity by full IDs in groups and at the root", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.settings.groupBorderStyle = "frame";
+  for (const grouped of [true, false]) {
+    state.saved.settings.groupProjects = grouped;
+    for (const active of ["s1", "server/s1", "s2"]) {
+      state.spaces.forEach(project => { project.active = project.id === active; });
+      const tree = view.render();
+      for (const project of state.spaces) {
+        const content = byId(tree, `project-${project.id}-content`);
+        assert.equal(Object.hasOwn(content.attributes, "border_1"), project.id === active);
+        assert.equal(content.attributes.rounded?.[0], project.id === active ? 6 : undefined);
+        assert.equal(content.attributes.ml?.[0], grouped && state.saved.assignments[project.id] ? 14 : 0);
+      }
+      if (!grouped) assert.ok(!hasId(tree, "group-g1"));
+    }
+  }
+  assert.deepEqual(state.writes, []);
+});
+
+test("active project outline remains when its terminals are collapsed hidden or absent", async () => {
+  const { view, state } = await collapsibleMod();
+  state.saved.settings.groupBorderStyle = "accent-frame";
+  state.theme = { border: "#333333", accent: "#6688ff" };
+  for (const mode of ["collapsed", "hidden", "absent"]) {
+    state.saved.collapsedProjects = mode === "collapsed" ? ["s1"] : [];
+    state.saved.settings.showTerminals = mode !== "hidden";
+    if (mode === "absent") state.spaces[0].tabs = [];
+    const content = byId(view.render(), "project-s1-content");
+    assert.equal(content.attributes.border_l?.[0], 2);
+    assert.ok(Object.hasOwn(content.attributes, "border_1"));
+    assert.equal(byId(content, "project-accent-s1").attributes.border_color?.[0], state.theme.border);
+    assert.deepEqual(terminalIds(content), []);
+    byId(content, "project-s1");
+  }
+  state.saved.collapsedGroups = ["g1"];
+  assert.ok(!hasId(view.render(), "project-s1-content"));
+  assert.deepEqual(state.writes, []);
+});
+
 test("compact sidebar draws groups with only a neutral left border", async () => {
   const { view, state } = await collapsibleMod();
   state.theme = { border: "#333333" };
@@ -553,6 +810,7 @@ test("compact exit drop zone keeps its action without a squeezed instruction", a
 
 test("wide or unknown sidebar widths keep the full presentation", async () => {
   const { view, state } = await collapsibleMod();
+  state.saved.settings.groupBorderStyle = "frame";
   for (const layout of [sidebarLayout(160), sidebarLayout(268), undefined,
     { id: "root" }, { id: "sidebar", size: { weight: 1 } }]) {
     state.layout = layout;
@@ -936,6 +1194,7 @@ test("color settings keep a scrollable body and a separate close button", async 
 
 test("project icons and group frames use theme colors in grouped and flat modes", async () => {
   const { view, state } = await collapsibleMod();
+  state.saved.settings.groupBorderStyle = "frame";
   state.saved.groups.push({ id: "g3", name: "Empty" });
   state.saved.nextGroupId = 4;
   for (const theme of [
@@ -969,7 +1228,7 @@ test("project icons and group frames use theme colors in grouped and flat modes"
         assert.equal(icon.attributes.size?.[0], 14);
         assert.ok(Object.hasOwn(icon.attributes, "flex_none"));
       }
-      if (!groupProjects) assert.ok(!nodes(tree).some(node => Object.hasOwn(node.attributes, "border_1")));
+      if (!groupProjects) assert.ok(!nodes(tree).some(node => node.attributes.id?.[0]?.startsWith("group-")));
     }
     state.saved.settings.groupProjects = true;
     state.saved.collapsedGroups = ["g1"];
@@ -1317,6 +1576,25 @@ test("dragging a project onto a collapsed empty folder assigns it without toggli
   assert.deepEqual(state.commands, []);
   assert.equal(state.saved.assignments["offline/s9"], "g1");
   assert.ok(!hasId(view.render(), "project-s1"));
+});
+
+test("accent frames retain full header highlighting while accepting a dragged project", async () => {
+  const fixture = await collapsibleMod();
+  const { view, state } = fixture;
+  state.saved.settings.groupBorderStyle = "accent-frame";
+  state.saved.groups[1].color = "ansi4";
+  state.theme = { border: "#333333", accent: "#6666ff", selected: "#222244", ansi4: "#4455aa" };
+  press(fixture, "project-s1");
+  aim(fixture, "group-header-g2");
+  const tree = view.render();
+  const header = byId(tree, "group-header-g2");
+  assert.ok(Object.hasOwn(header.attributes, "border_1"));
+  assert.equal(header.attributes.border_color?.[0], state.theme.accent);
+  assert.equal(header.attributes.bg?.[0], state.theme.selected);
+  assert.equal(byId(tree, "group-g2").attributes.border_color?.[0], state.theme.border);
+  assert.equal(byId(tree, "group-accent-g2").attributes.border_color?.[0], state.theme.ansi4);
+  release(fixture, "group-header-g2");
+  assert.equal(state.saved.assignments.s1, "g2");
 });
 
 test("projects from another machine can be assigned via a folder header", async () => {
